@@ -1,0 +1,6 @@
+secrets/
+target/
+.idea/
+.ensime
+.ensime_cache/
+*.sc
