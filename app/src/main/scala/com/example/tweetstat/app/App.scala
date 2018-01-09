@@ -19,10 +19,25 @@ object App {
                     pollerCadence: FiniteDuration,
                     pollerHistogramSize: Int)
 
+  val banner =
+    """
+      |
+      |  _                     _       _        _
+      | | |                   | |     | |      | |
+      | | |___      _____  ___| |_ ___| |_ __ _| |_ ___
+      | | __\ \ /\ / / _ \/ _ \ __/ __| __/ _` | __/ __|
+      | | |_ \ V  V /  __/  __/ |_\__ \ || (_| | |_\__ \
+      |  \__| \_/\_/ \___|\___|\__|___/\__\__,_|\__|___/
+      |
+      |
+      |
+    """.stripMargin
 }
 
 case class App(config: App.Config) {
   val log = Logger[this.type]
+
+  log.info(App.banner)
 
   /* This signal gets updated asynchronously in a background task,
    * and exposes a stream of stats that can be polled by a periodic
