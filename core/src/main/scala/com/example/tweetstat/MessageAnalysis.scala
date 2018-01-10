@@ -2,10 +2,9 @@ package com.example.tweetstat
 
 import com.twitter.algebird.SpaceSaver
 
-import scalaz.Reader
-import scalaz.concurrent.Task
-import scalaz.stream._
-import scalaz.stream.async.mutable.Signal
+import cats.data._
+import cats.effect._
+import fs2._
 
 object MessageAnalysis {
   case class Config(
@@ -25,6 +24,7 @@ case class MessageAnalysis(config: MessageAnalysis.Config,
 
   val hashtagRegex = """#[a-zA-Z][a-zA-Z0-9]*""".r
 
+  // TODO handle non-ascii hashtags
   def collectHashtags(m: Message): Vector[String] = {
     hashtagRegex.findAllIn(m.text).toVector
   }
@@ -173,16 +173,9 @@ case class MessageAnalysis(config: MessageAnalysis.Config,
     )
   }
 
-  def sink(stats: Signal[AlgebirdStats]): Sink[Task, StatsDiff] = {
-    Process.constant { (diff: StatsDiff) =>
-      stats
-        .compareAndSet {
-          case Some(stats) =>
-            Some(applyDiff(stats, diff))
-          case None =>
-            None
-        }
-        .map(_ => ())
+  def sink(stats: async.mutable.Signal[IO, AlgebirdStats]): Sink[IO, StatsDiff] = {
+    Sink { (diff: StatsDiff) =>
+      stats.modify(applyDiff(_, diff)).map(_ => ())
     }
   }
 }

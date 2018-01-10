@@ -1,22 +1,20 @@
-package com.example.tweetstat.app
+package com.example.tweetstat
+package app
 
-import com.example.tweetstat.{Err, Message, Url}
-import io.circe.{Decoder, HCursor, Json}
 import journal.Logger
+import org.http4s._
 import org.http4s.client.{Client, oauth1}
-import org.http4s.{EntityBody, Method, Request, Uri}
-
-import scalaz.\/
-import scalaz.concurrent.Task
-import scalaz.stream.Process
+import cats.effect._
+import fs2.Stream
+import jawnfs2._
+import _root_.io.circe.{Decoder, HCursor, Json}
+import com.example.tweetstat.Message
 
 object TwitterMessageSource {
   object Config {
-    case class Secrets(
-      consumerSecret: Secret,
-      tokenSecret: Secret)
+    case class Secrets(consumerSecret: Secret, tokenSecret: Secret)
   }
-  case class Config(client: Client,
+  case class Config(client: Client[IO],
                     consumerKey: String,
                     consumerSecret: Secret,
                     token: String,
@@ -28,12 +26,22 @@ object TwitterMessageSource {
         displayUrl <- c.downField("display_url").as[String]
       } yield Url(displayUrl)
   }
+  implicit val decodeHashtags: Decoder[Hashtag] = new Decoder[Hashtag] {
+    final def apply(c: HCursor): Decoder.Result[Hashtag] =
+      for {
+        displayHashtag <- c.downField("display_url").as[String]
+      } yield Hashtag(displayHashtag)
+  }
   implicit val decodeMessage: Decoder[Message] = new Decoder[Message] {
     final def apply(c: HCursor): Decoder.Result[Message] =
       for {
         text <- c.downField("text").as[String]
         urls <- c.downField("entities").downField("urls").as[List[Url]]
-      } yield Message(text, urls)
+        hashtags <- c
+          .downField("entities")
+          .downField("hashtags")
+          .as[List[Hashtag]]
+      } yield Message(text, urls, hashtags)
   }
 }
 case class TwitterMessageSource(config: TwitterMessageSource.Config) {
@@ -41,14 +49,16 @@ case class TwitterMessageSource(config: TwitterMessageSource.Config) {
 
   val client = config.client
 
-  val request = Request(
+  val request = Request[IO](
     Method.GET,
+    //TODO move into config
     Uri.uri("https://stream.twitter.com/1.1/statuses/sample.json"))
 
-  def byteStream: EntityBody =
+  // TODO handle reconnects and delayed connections
+  def byteStream: EntityBody[IO] =
     for {
-      sr <- Process.eval(
-        oauth1.signRequest(
+      sr <- Stream.eval(
+        oauth1.signRequest[IO](
           request,
           oauth1.Consumer(
             config.consumerKey,
@@ -64,17 +74,14 @@ case class TwitterMessageSource(config: TwitterMessageSource.Config) {
       res <- client.streaming(sr)(resp => resp.body)
     } yield res
 
-  def jsonStream: Process[Task, Json] = {
-    implicit val f = io.circe.jawn.CirceSupportParser.facade
-    import jawnstreamz._
-    byteStream.parseJsonStream
-  }
+  implicit val f = _root_.io.circe.jawn.CirceSupportParser.facade
 
-  def messageStream: Process[Task, Err \/ Message] = {
-    jsonStream.map { json =>
-      json
-        .as[Message](TwitterMessageSource.decodeMessage)
-        .fold(x => \/.left(Err(s"${x.message}: ${json.toString}")), \/.right)
-    }
+  def messageStream: Stream[IO, Either[Err, Message]] = {
+    byteStream.chunks.parseJsonStream
+      .map { json =>
+        json
+          .as[Message](TwitterMessageSource.decodeMessage)
+          .fold(x => Left(Err(s"${x.message}: ${json.toString}")), Right.apply)
+      }
   }
 }

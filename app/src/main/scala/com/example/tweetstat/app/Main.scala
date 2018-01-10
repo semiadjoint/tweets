@@ -1,27 +1,27 @@
 package com.example.tweetstat.app
 
+import java.time.Instant
+
 import journal.Logger
-import org.http4s.util.ProcessApp
+import cats.effect._
+import fs2._
+import scala.concurrent.ExecutionContext.Implicits.global
 
-import scalaz.concurrent.Task
-import scalaz.stream.Process
-
-object Main extends ProcessApp {
+object Main extends StreamApp[IO] {
   val log = Logger[this.type]
 
-  val config: App.Config = AppConfig.load.unsafePerformSyncAttempt.fold(
-    t => {
-      log.error(s"Loading config failed: ${t.getMessage}")
-      throw t
-    },
-    identity
-  )
+  override def stream(args: List[String], requestShutdown: IO[Unit]): Stream[IO,StreamApp.ExitCode] = for {
+    config <- AppConfig.load
 
-  val app = App(config)
+    app = App(config)
+    s <- Stream.eval(app.atomicStats)
+    t <- Stream.eval(IO.apply(Instant.now()))
+    statting = processing(s).run(config)
 
-  override def process(args: List[String]): Process[Task, Nothing] = {
-    Process
-      .eval(app.startBackgroundJobs(app.atomicStats))
-      .flatMap(app.startHttpServer)
-  }
+    polling = app.startStatPolling(t, s)
+    serving = app.startHttpServer(t, s.discrete)
+    result <- serving
+      .concurrently(statting)
+      .concurrently(polling)
+  } yield StreamApp.ExitCode.Success
 }

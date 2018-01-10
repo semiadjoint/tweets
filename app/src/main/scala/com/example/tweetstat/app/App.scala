@@ -2,82 +2,71 @@ package com.example.tweetstat.app
 
 import java.time.Instant
 
+import cats.effect._
+import fs2._
 import com.example.tweetstat._
 import journal.Logger
 import org.http4s.server.blaze.BlazeBuilder
 
 import scala.concurrent.duration.FiniteDuration
-import scalaz.concurrent.Task
-import scalaz.stream.async.mutable.Signal
-import scalaz.stream.{Process, async}
+import scala.concurrent.ExecutionContext.Implicits.global
 
 object App {
-  case class Config(serverPort: Int,
-                    twitter: TwitterMessageSource.Config,
-                    analysis: MessageAnalysis.Config,
-                    stats: AlgebirdStats.Config,
-                    pollerCadence: FiniteDuration,
-                    pollerHistogramSize: Int)
+  case class Config(
+    scheduler: Scheduler,
+    serverPort: Int,
+    twitter: TwitterMessageSource.Config,
+    analysis: MessageAnalysis.Config,
+    stats: AlgebirdStats.Config,
+    pollerCadence: FiniteDuration,
+    pollerHistogramSize: Int,
+    banner: Vector[String] = banner
+  )
 
   val banner =
     """
       |
       |  _                     _       _        _
-      | | |                   | |     | |      | |
       | | |___      _____  ___| |_ ___| |_ __ _| |_ ___
       | | __\ \ /\ / / _ \/ _ \ __/ __| __/ _` | __/ __|
       | | |_ \ V  V /  __/  __/ |_\__ \ || (_| | |_\__ \
       |  \__| \_/\_/ \___|\___|\__|___/\__\__,_|\__|___/
       |
       |
-      |
-    """.stripMargin
+  """.stripMargin.split('\n').toVector
+
+
 }
 
 case class App(config: App.Config) {
   val log = Logger[this.type]
 
-  log.info(App.banner)
 
   /* This signal gets updated asynchronously in a background task,
    * and exposes a stream of stats that can be polled by a periodic
    * logging task or by HTTP requests. See below for examples of each.
    * */
-  val atomicStats: Signal[AlgebirdStats] =
-    async.signalOf(AlgebirdStats.empty(config.stats.maxCounters))
+  val atomicStats: IO[async.mutable.Signal[IO, AlgebirdStats]] =
+    async.signalOf[IO,AlgebirdStats](AlgebirdStats.empty(config.stats.maxCounters))
 
 
   /* Start background job that pulls tweets and updates stats. */
-  def startMessageProcessing(atomicStats: Signal[AlgebirdStats]): Task[Unit] =
-    Task.delay(
-      Threads.runBackground(
-        "message-fetch-and-analysis",
-        processing.processMessages(atomicStats).run(config).run)(Threads.defaultPool))
+  def startMessageProcessing(atomicStats: async.mutable.Signal[IO,AlgebirdStats]): Stream[IO,StatsDiff] =
+    processing(atomicStats).run(config)
 
   /* Start background job to periodically log stats. */
   def startStatPolling(start: Instant,
-                       atomicStats: Signal[AlgebirdStats]): Task[Unit] =
-    Task.delay(
-      Threads.runBackground("stats-polling",
-                            polling.pollStats(start, atomicStats).run(config)
-                              .logged(s => log.info(s))
-                              .run)(Threads.defaultPool))
+                       atomicStats: async.immutable.Signal[IO,AlgebirdStats]): Stream[IO,AlgebirdStats.Summary] =
+    polling(start, atomicStats).run(config)
+      .logged(s => log.info(s))
 
-  /* Start puller/analyzer and poller log stats. */
-  def startBackgroundJobs(atomicStats: Signal[AlgebirdStats]): Task[Instant] =
-    for {
-      _ <- startMessageProcessing(atomicStats)
-      startTime <- Task.delay(Instant.now())
-      _ <- startStatPolling(startTime, atomicStats)
-    } yield startTime
-
-  def startHttpServer(startTime: Instant): Process[Task, Nothing] = {
-    BlazeBuilder
+  def startHttpServer(startTime: Instant, stats: Stream[IO, AlgebirdStats])
+  : Stream[IO, StreamApp.ExitCode] = {
+    BlazeBuilder[IO]
+      .withBanner(config.banner)
       .bindHttp(config.serverPort)
-      .mountService(HttpHandlers(startTime, atomicStats.discrete).service,
-                    "/tweetstat/")
+      .mountService(HttpHandlers(startTime, stats).service, "/tweetstat/")
       .serve
-      .onComplete(Process.eval_(config.twitter.client.shutdown))
   }
 
 }
