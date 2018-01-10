@@ -1,6 +1,6 @@
 libraryDependencies ++= Seq(
-  "org.scalatest" %% "scalatest" % "3.0.4" % "test",
-  "org.scalacheck" %% "scalacheck" % "1.13.4" % "test"
+  "org.scalatest" %% "scalatest" % V.scalatest.value % "test",
+  "org.scalacheck" %% "scalacheck" % V.scalacheck.value % "test"
 )
 libraryDependencies ++= Seq(
   "io.verizon.journal" %% "core" % V.journal.value,
@@ -16,8 +16,14 @@ libraryDependencies ++= Seq(
 ).map(_ % V.circe.value)
 
 libraryDependencies ++= Seq(
-  "org.scalaz" %% "scalaz-core",
-  "org.scalaz" %% "scalaz-concurrent"
-).map(_ % V.scalaz.value)
+  "org.typelevel" %% "cats-core"
+).map(_ % V.cats.value)
 
-libraryDependencies += "org.scalaz.stream" %% "scalaz-stream" % V.scalazStream.value
+libraryDependencies ++= Seq(
+  "org.typelevel" %% "cats-effect"
+).map(_ % V.catsEffect.value)
+
+libraryDependencies ++= Seq(
+  "co.fs2" %% "fs2-core",
+  "co.fs2" %% "fs2-io"
+).map(_ % V.fs2.value)

@@ -5,22 +5,20 @@ import java.util.concurrent.TimeUnit
 
 import journal.Logger
 
+import cats.effect._
+import fs2._
+
 import scala.concurrent.duration.FiniteDuration
-import scalaz.concurrent.Task
-import scalaz.stream.Process
+import scala.concurrent.ExecutionContext.Implicits.global
 
 package object app {
   val log = Logger[this.type]
 
-  implicit class ProcessOps[A](p: Process[Task, A]) {
-    def logged(log: String => Unit): Process[Task, A] = {
-      val sink: Process[Task, A => Task[Unit]] =
-        Process.constant((x: A) => Task.delay(log(x.toString)))
-      p.observe(sink)
+  implicit class StreamOps[A](p: Stream[IO, A]) {
+    def logged(log: String => Unit): Stream[IO, A] = {
+      p.observe(Sink((x: A) => IO.apply(log(x.toString))))
     }
   }
   def finiteDuration(start: Instant, end: Instant): FiniteDuration =
     FiniteDuration(Duration.between(start, end).toNanos, TimeUnit.NANOSECONDS)
-
-
 }

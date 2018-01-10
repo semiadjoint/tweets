@@ -1,4 +1,4 @@
-libraryDependencies += "io.verizon.knobs" %% "core" % "4.0.31-scalaz-7.2"
+libraryDependencies += "io.verizon.knobs" %% "core" % "5.0.32"
 
 libraryDependencies ++= Seq(
   "org.tpolecat" %% "doobie-core" % V.doobie.value,
